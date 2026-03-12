@@ -1,10 +1,29 @@
-import bcrypt from 'bcrypt';
-import postgres from 'postgres';
-import { invoices, customers, revenue, users } from '../lib/placeholder-data';
+import bcrypt from "bcrypt";
+import postgres from "postgres";
+import { invoices, customers, revenue, users } from "../lib/placeholder-data";
 
-const sql = postgres(process.env.POSTGRES_URL!, { ssl: 'require' });
+function getSql() {
+  const url = process.env.POSTGRES_URL;
+  if (!url) {
+    throw new Error("POSTGRES_URL is not set. Please define it in .env.local.");
+  }
 
-async function seedUsers() {
+  // When Next.js runs on the host (not inside Docker), the hostname "db"
+  // cannot be resolved. Since compose.yml maps port 5432 to the host,
+  // we replace "db" with "localhost" so the host process can reach it.
+  const resolvedUrl = url.replace(/@db\b/g, "@localhost");
+
+  console.log("Resolved URL:", resolvedUrl);
+
+  // Disable SSL for local connections; require it for remote/cloud DBs.
+  const isLocal =
+    resolvedUrl.includes("localhost") || resolvedUrl.includes("127.0.0.1");
+  const ssl = isLocal ? false : "require";
+
+  return postgres(resolvedUrl, { ssl });
+}
+
+async function seedUsers(sql: postgres.Sql) {
   await sql`CREATE EXTENSION IF NOT EXISTS "uuid-ossp"`;
   await sql`
     CREATE TABLE IF NOT EXISTS users (
@@ -29,7 +48,7 @@ async function seedUsers() {
   return insertedUsers;
 }
 
-async function seedInvoices() {
+async function seedInvoices(sql: postgres.Sql) {
   await sql`CREATE EXTENSION IF NOT EXISTS "uuid-ossp"`;
 
   await sql`
@@ -55,7 +74,7 @@ async function seedInvoices() {
   return insertedInvoices;
 }
 
-async function seedCustomers() {
+async function seedCustomers(sql: postgres.Sql) {
   await sql`CREATE EXTENSION IF NOT EXISTS "uuid-ossp"`;
 
   await sql`
@@ -80,7 +99,7 @@ async function seedCustomers() {
   return insertedCustomers;
 }
 
-async function seedRevenue() {
+async function seedRevenue(sql: postgres.Sql) {
   await sql`
     CREATE TABLE IF NOT EXISTS revenue (
       month VARCHAR(4) NOT NULL UNIQUE,
@@ -102,16 +121,26 @@ async function seedRevenue() {
 }
 
 export async function GET() {
+  let sql: postgres.Sql | undefined;
+
   try {
-    const result = await sql.begin((sql) => [
-      seedUsers(),
-      seedCustomers(),
-      seedInvoices(),
-      seedRevenue(),
+    sql = getSql();
+
+    await sql.begin((tx) => [
+      seedUsers(tx as unknown as postgres.Sql),
+      seedCustomers(tx as unknown as postgres.Sql),
+      seedInvoices(tx as unknown as postgres.Sql),
+      seedRevenue(tx as unknown as postgres.Sql),
     ]);
 
-    return Response.json({ message: 'Database seeded successfully' });
+    return Response.json({ message: "Database seeded successfully" });
   } catch (error) {
-    return Response.json({ error }, { status: 500 });
+    console.error("Seed error:", error);
+    return Response.json(
+      { error: error instanceof Error ? error.message : String(error) },
+      { status: 500 },
+    );
+  } finally {
+    await sql?.end();
   }
 }
