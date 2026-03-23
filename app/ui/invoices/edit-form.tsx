@@ -140,6 +140,7 @@ export default function EditInvoiceForm({
                     {error}
                   </p>
                 ))}
+            </div>
           </div>
         </fieldset>
       </div>
